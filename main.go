@@ -62,7 +62,7 @@ func main() {
 		Title:    "Touch Sistemas - Postos",
 		Size:     Size{Width: 400, Height: 200},
 		Layout:   VBox{},
-		Icon:     "touchsistemas.ico",
+		Icon:     "icon.ico",
 		OnSizeChanged: func() {
 			if win.IsIconic(mw.Handle()) {
 				mw.Hide()
@@ -128,7 +128,7 @@ func (mw *MyWindow) AddNotifyIcon() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	icon, err := walk.Resources.Image("touchsistemas.ico")
+	icon, err := walk.Resources.Image("icon.ico")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func readDatabase() {
 	if err != nil {
 		log.Fatal("Erro ao carregar o arquivo .env:", err)
 	}
-	dbUser := os.Getenv("DB_USER")
+	MySQLConfig.dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
