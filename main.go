@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,22 +32,20 @@ type Data struct {
 	DatabaseIP       string `json:"databaseIP"`
 	DatabasePort     string `json:"databasePort"`
 	DatabaseUser     string `json:"databaseUser"`
-	DatabasePassword string `json:"atabasePassword"`
+	DatabasePassword string `json:"databasePassword"`
 }
 
 type DadosBomba struct {
-	ID            int
-	Bomba         int
-	ValorUnitario float64
-	Litros        float64
-	ValorTotal    float64
+	Id         int
+	PumpNumber int
+	UnitValue  float64
+	Quantity   float64
+	TotalValue float64
+	Date       time.Time
 }
 
-type MySQLConfig struct {
-	DatabaseIP       string `json:"databaseIP"`
-	DatabasePort     string `json:"databasePort"`
-	DatabaseUser     string `json:"databaseUser"`
-	DatabasePassword string `json:"atabasePassword"`
+type ApiConfig struct {
+	Url string
 }
 
 func main() {
@@ -62,7 +64,7 @@ func main() {
 		Title:    "Touch Sistemas - Postos",
 		Size:     Size{Width: 400, Height: 200},
 		Layout:   VBox{},
-		Icon:     "icon.ico",
+		Icon:     "touchsistemas.ico",
 		OnSizeChanged: func() {
 			if win.IsIconic(mw.Handle()) {
 				mw.Hide()
@@ -128,7 +130,7 @@ func (mw *MyWindow) AddNotifyIcon() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	icon, err := walk.Resources.Image("icon.ico")
+	icon, err := walk.Resources.Image("touchsistemas.ico")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -227,50 +229,58 @@ func saveDataToRegistry(data Data) error {
 	return nil
 }
 
-func readDatabase() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Erro ao carregar o arquivo .env:", err)
+func sendData(existingData Data, apiConfig ApiConfig, dadosBomba DadosBomba) {
+	dados := map[string]string{
+		"organizationCode": existingData.OrganizationCode,
+		"gasStationCode":   existingData.GasStationCode,
+		"pumpNumber":       strconv.Itoa(dadosBomba.PumpNumber),
+		"quantity":         strconv.FormatFloat(dadosBomba.Quantity, 'f', -1, 64),
+		"unitValue":        strconv.FormatFloat(dadosBomba.UnitValue, 'f', -1, 64),
+		"totalValue":       strconv.FormatFloat(dadosBomba.TotalValue, 'f', -1, 64),
+		"date":             dadosBomba.Date.Format("2006-01-02 15:04:05"),
 	}
-	MySQLConfig.dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	dbName := os.Getenv("DB_NAME")
-
-	mysqlConnStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", dbUser, dbPassword, dbHost, dbPort, dbName)
-	mysqlDB, err := sql.Open("mysql", mysqlConnStr)
-	if err != nil {
-		log.Fatal("Erro ao conectar ao banco de dados MySQL:", err)
-	}
-	defer mysqlDB.Close()
-
-	existingData, err := readDataFromRegistry()
+	jsonData, err := json.Marshal(dados)
 	if err != nil {
 		log.Fatal(err)
 	}
-	connStr := fmt.Sprintf("user=%s dbname=desbravador password=%s host=%s port=%s sslmode=disable", existingData.DatabaseUser, existingData.DatabasePassword, existingData.DatabaseIP, existingData.DatabasePort)
-	pgDB, err := sql.Open("postgres", connStr)
+	req, err := http.NewRequest("POST", apiConfig.Url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		panic(err)
+		log.Println(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			log.Println(resp.StatusCode)
+		} else {
+			log.Println(dados)
+		}
+	}
+}
+
+func readDatabase(existingData Data, apiConfig ApiConfig) {
+	pgCconnStr := fmt.Sprintf("user=%s dbname=desbravador password=%s host=%s port=%s sslmode=disable", existingData.DatabaseUser, existingData.DatabasePassword, existingData.DatabaseIP, existingData.DatabasePort)
+	pgDB, err := sql.Open("postgres", pgCconnStr)
+	if err != nil {
+		log.Fatal(err)
 	}
 	defer pgDB.Close()
-	rows, err := pgDB.Query("SELECT id, bomba, valor_unitario, litros, valor_total FROM bombas")
+	rows, err := pgDB.Query("SELECT * FROM bombas")
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		dadosBomba := DadosBomba{}
-		err := rows.Scan(&dadosBomba.ID, &dadosBomba.Bomba, &dadosBomba.ValorUnitario, &dadosBomba.Litros, &dadosBomba.ValorTotal)
+		err := rows.Scan(&dadosBomba.Id, &dadosBomba.PumpNumber, &dadosBomba.UnitValue, &dadosBomba.Quantity, &dadosBomba.TotalValue, &dadosBomba.Date)
 		if err != nil {
 			log.Fatal(err)
 		}
-		_, err = mysqlDB.Exec("INSERT INTO tabela (bomba, valor_unitario, litros, valor_total) VALUES (?, ?, ?, ?, ?)", dadosBomba.Bomba, dadosBomba.ValorUnitario, dadosBomba.Litros, dadosBomba.ValorTotal)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("ID: %d, Bomba: %d, Valor Unitário: %.2f, Litros: %.2f, Valor Total: %.2f", dadosBomba.ID, dadosBomba.Bomba, dadosBomba.ValorUnitario, dadosBomba.Litros, dadosBomba.ValorTotal)
+		sendData(existingData, apiConfig, dadosBomba)
 	}
 	err = rows.Err()
 	if err != nil {
@@ -279,12 +289,20 @@ func readDatabase() {
 }
 
 func sendDataPeriodically() {
-	readDatabase()
-	ticker := time.NewTicker(20 * time.Second)
-	for {
-		select {
-		case <-ticker.C:
-			readDatabase()
-		}
+	existingData, err := readDataFromRegistry()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = godotenv.Load()
+	if err != nil {
+		log.Fatal("Erro ao carregar o arquivo .env:", err)
+	}
+	apiConfig := ApiConfig{
+		Url: os.Getenv("API_URL"),
+	}
+	readDatabase(existingData, apiConfig)
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		readDatabase(existingData, apiConfig)
 	}
 }
