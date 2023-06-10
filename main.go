@@ -55,7 +55,7 @@ func main() {
 
 	existingData, err := readDataFromRegistry()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	mw := new(MyWindow)
@@ -106,14 +106,14 @@ func main() {
 					existingData.GasStationCode = gasStationCode
 					err := saveDataToRegistry(existingData)
 					if err != nil {
-						log.Fatal(err)
+						log.Println(err)
 					}
 					mw.Close()
 				},
 			},
 		},
 	}.Create()); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	mw.AddNotifyIcon()
 	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
@@ -128,28 +128,28 @@ func (mw *MyWindow) AddNotifyIcon() {
 	var err error
 	mw.ni, err = walk.NewNotifyIcon(mw)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	icon, err := walk.Resources.Image("touchsistemas.ico")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	mw.ni.SetIcon(icon)
 	if err := mw.ni.SetToolTip("Touch Sistemas Postos - Integração com Desbravador"); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	exitAction := walk.NewAction()
 	if err := exitAction.SetText("Fechar"); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	exitAction.Triggered().Attach(func() { walk.App().Exit(0) })
 	if err := mw.ni.ContextMenu().Actions().Add(exitAction); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	mw.ni.SetVisible(true)
 	if err := mw.ni.ShowMessage("Touch Sistemas Postos", "Integração com Desbravador."); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
@@ -241,7 +241,7 @@ func sendData(existingData Data, apiConfig ApiConfig, dadosBomba DadosBomba) {
 	}
 	jsonData, err := json.Marshal(dados)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	req, err := http.NewRequest("POST", apiConfig.Url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -266,36 +266,36 @@ func readDatabase(existingData Data, apiConfig ApiConfig) {
 	pgCconnStr := fmt.Sprintf("user=%s dbname=desbravador password=%s host=%s port=%s sslmode=disable", existingData.DatabaseUser, existingData.DatabasePassword, existingData.DatabaseIP, existingData.DatabasePort)
 	pgDB, err := sql.Open("postgres", pgCconnStr)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer pgDB.Close()
 	rows, err := pgDB.Query("SELECT * FROM bombas")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		dadosBomba := DadosBomba{}
 		err := rows.Scan(&dadosBomba.Id, &dadosBomba.PumpNumber, &dadosBomba.UnitValue, &dadosBomba.Quantity, &dadosBomba.TotalValue, &dadosBomba.Date)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 		}
 		sendData(existingData, apiConfig, dadosBomba)
 	}
 	err = rows.Err()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
 func sendDataPeriodically() {
 	existingData, err := readDataFromRegistry()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	err = godotenv.Load()
 	if err != nil {
-		log.Fatal("Erro ao carregar o arquivo .env:", err)
+		log.Println("Erro ao carregar o arquivo .env:", err)
 	}
 	apiConfig := ApiConfig{
 		Url: os.Getenv("API_URL"),
