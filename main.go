@@ -8,40 +8,55 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
-	"github.com/lxn/walk"
-	. "github.com/lxn/walk/declarative"
-	"github.com/lxn/win"
 	"golang.org/x/sys/windows/registry"
 )
-
-type MyWindow struct {
-	*walk.MainWindow
-	ni *walk.NotifyIcon
-}
 
 type Data struct {
 	OrganizationCode string `json:"organizationCode"`
 	GasStationCode   string `json:"gasStationCode"`
-	DatabaseIP       string `json:"databaseIP"`
-	DatabasePort     string `json:"databasePort"`
-	DatabaseUser     string `json:"databaseUser"`
-	DatabasePassword string `json:"databasePassword"`
+	DBIp             string `json:"dbIP"`
+	DBPort           string `json:"dbPort"`
+	DBDatabase       string `json:"dbDatabase"`
+	DBUser           string `json:"dbUser"`
+	DBPwd            string `json:"dbPwd"`
+	DBRole           string `json:"dbRole"`
+	DBCompanyID      string `json:"dbCompanyID"`
 }
 
-type DadosBomba struct {
-	Id         int
-	PumpNumber int
-	UnitValue  float64
-	Quantity   float64
-	TotalValue float64
-	Date       time.Time
+type Pumps struct {
+	CdAbastecimento int
+	DhAbastecimento time.Time
+	DhProcessamento time.Time
+	QtVolume        float64
+	VlUnitario      float64
+	VlTotal         float64
+	CdBico          int
+	CdEmpresa       int
+	FlLancado       int
+	FlCancelado     int
+	FlTipo          int
+	DsBico          string
+	DsApelido       string
+}
+
+type PumpData struct {
+	OrganizationCode        string
+	GasStationCode          string
+	GasStationTransactionID int
+	Quantity                float64
+	UnitValue               float64
+	TotalValue              float64
+	Processed               int
+	Date                    string
+	PumpNumber              int
+	FuelName                string
+	CompanyName             string
 }
 
 type ApiConfig struct {
@@ -49,108 +64,7 @@ type ApiConfig struct {
 }
 
 func main() {
-	var (
-		organizationCodeTE, gasStationCodeTE, databaseIPTE, databasePortTE, databaseUserTE, databasePasswordTE *walk.TextEdit
-	)
-
-	existingData, err := readDataFromRegistry()
-	if err != nil {
-		log.Println(err)
-	}
-
-	mw := new(MyWindow)
-	if err := (MainWindow{
-		AssignTo: &mw.MainWindow,
-		Title:    "Touch Sistemas - Postos",
-		Size:     Size{Width: 400, Height: 200},
-		Layout:   VBox{},
-		Icon:     "touchsistemas.ico",
-		OnSizeChanged: func() {
-			if win.IsIconic(mw.Handle()) {
-				mw.Hide()
-			}
-		},
-		Children: []Widget{
-			GroupBox{
-				Title:  "Preencha os dados abaixo:",
-				Layout: Grid{Columns: 2},
-				Children: []Widget{
-					Label{Text: "IP do Banco de Dados:"},
-					TextEdit{AssignTo: &databaseIPTE, Text: existingData.DatabaseIP},
-					Label{Text: "Porta do Banco de Dados:"},
-					TextEdit{AssignTo: &databasePortTE, Text: existingData.DatabasePort},
-					Label{Text: "Usuário do Banco de Dados:"},
-					TextEdit{AssignTo: &databaseUserTE, Text: existingData.DatabaseUser},
-					Label{Text: "Senha do Banco de Dados:"},
-					TextEdit{AssignTo: &databasePasswordTE, Text: existingData.DatabasePassword},
-					Label{Text: "Código da Organização:"},
-					TextEdit{AssignTo: &organizationCodeTE, Text: existingData.OrganizationCode},
-					Label{Text: "Código do Posto:"},
-					TextEdit{AssignTo: &gasStationCodeTE, Text: existingData.GasStationCode},
-				},
-			},
-			PushButton{
-				Text: "Continuar",
-				OnClicked: func() {
-					databaseIP := strings.TrimSpace(databaseIPTE.Text())
-					databasePort := strings.TrimSpace(databasePortTE.Text())
-					databaseUser := strings.TrimSpace(databaseUserTE.Text())
-					databasePassword := strings.TrimSpace(databasePasswordTE.Text())
-					organizationCode := strings.TrimSpace(organizationCodeTE.Text())
-					gasStationCode := strings.TrimSpace(gasStationCodeTE.Text())
-					existingData.DatabaseIP = databaseIP
-					existingData.DatabasePort = databasePort
-					existingData.DatabaseUser = databaseUser
-					existingData.DatabasePassword = databasePassword
-					existingData.OrganizationCode = organizationCode
-					existingData.GasStationCode = gasStationCode
-					err := saveDataToRegistry(existingData)
-					if err != nil {
-						log.Println(err)
-					}
-					mw.Close()
-				},
-			},
-		},
-	}.Create()); err != nil {
-		log.Println(err)
-	}
-	mw.AddNotifyIcon()
-	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
-		*canceled = true
-		mw.Hide()
-		go sendDataPeriodically()
-	})
-	mw.Run()
-}
-
-func (mw *MyWindow) AddNotifyIcon() {
-	var err error
-	mw.ni, err = walk.NewNotifyIcon(mw)
-	if err != nil {
-		log.Println(err)
-	}
-	icon, err := walk.Resources.Image("touchsistemas.ico")
-	if err != nil {
-		log.Println(err)
-	}
-	mw.ni.SetIcon(icon)
-	if err := mw.ni.SetToolTip("Touch Sistemas Postos - Integração com Desbravador"); err != nil {
-		log.Println(err)
-	}
-	exitAction := walk.NewAction()
-	if err := exitAction.SetText("Fechar"); err != nil {
-		log.Println(err)
-	}
-	exitAction.Triggered().Attach(func() { walk.App().Exit(0) })
-	if err := mw.ni.ContextMenu().Actions().Add(exitAction); err != nil {
-		log.Println(err)
-	}
-
-	mw.ni.SetVisible(true)
-	if err := mw.ni.ShowMessage("Touch Sistemas Postos", "Integração com Desbravador."); err != nil {
-		log.Println(err)
-	}
+	sendDataPeriodically()
 }
 
 func readDataFromRegistry() (Data, error) {
@@ -163,19 +77,31 @@ func readDataFromRegistry() (Data, error) {
 		return data, nil
 	}
 	defer k.Close()
-	databaseIP, _, err := k.GetStringValue("DatabaseIP")
+	dbIP, _, err := k.GetStringValue("DBIp")
 	if err != nil {
 		return data, err
 	}
-	databasePort, _, err := k.GetStringValue("DatabasePort")
+	dbPort, _, err := k.GetStringValue("DBPort")
 	if err != nil {
 		return data, err
 	}
-	databaseUser, _, err := k.GetStringValue("DatabaseUser")
+	dbDatabase, _, err := k.GetStringValue("DBDatabase")
 	if err != nil {
 		return data, err
 	}
-	databasePassword, _, err := k.GetStringValue("DatabasePassword")
+	dbUser, _, err := k.GetStringValue("DBUser")
+	if err != nil {
+		return data, err
+	}
+	dbPwd, _, err := k.GetStringValue("DBPwd")
+	if err != nil {
+		return data, err
+	}
+	dbRole, _, err := k.GetStringValue("DBRole")
+	if err != nil {
+		return data, err
+	}
+	dbCompanyID, _, err := k.GetStringValue("DBCompanyID")
 	if err != nil {
 		return data, err
 	}
@@ -187,10 +113,13 @@ func readDataFromRegistry() (Data, error) {
 	if err != nil {
 		return data, err
 	}
-	data.DatabaseIP = databaseIP
-	data.DatabasePort = databasePort
-	data.DatabaseUser = databaseUser
-	data.DatabasePassword = databasePassword
+	data.DBIp = dbIP
+	data.DBPort = dbPort
+	data.DBDatabase = dbDatabase
+	data.DBUser = dbUser
+	data.DBPwd = dbPwd
+	data.DBRole = dbRole
+	data.DBCompanyID = dbCompanyID
 	data.OrganizationCode = organizationCode
 	data.GasStationCode = gasStationCode
 	return data, nil
@@ -202,19 +131,31 @@ func saveDataToRegistry(data Data) error {
 		return err
 	}
 	defer k.Close()
-	err = k.SetStringValue("DatabaseIP", data.DatabaseIP)
+	err = k.SetStringValue("DBIp", data.DBIp)
 	if err != nil {
 		return err
 	}
-	err = k.SetStringValue("DatabasePort", data.DatabasePort)
+	err = k.SetStringValue("DBPort", data.DBPort)
 	if err != nil {
 		return err
 	}
-	err = k.SetStringValue("DatabaseUser", data.DatabaseUser)
+	err = k.SetStringValue("DBDatabase", data.DBDatabase)
 	if err != nil {
 		return err
 	}
-	err = k.SetStringValue("DatabasePassword", data.DatabasePassword)
+	err = k.SetStringValue("DBUser", data.DBUser)
+	if err != nil {
+		return err
+	}
+	err = k.SetStringValue("DBPwd", data.DBPwd)
+	if err != nil {
+		return err
+	}
+	err = k.SetStringValue("DBRole", data.DBRole)
+	if err != nil {
+		return err
+	}
+	err = k.SetStringValue("DBCompanyID", data.DBCompanyID)
 	if err != nil {
 		return err
 	}
@@ -229,62 +170,117 @@ func saveDataToRegistry(data Data) error {
 	return nil
 }
 
-func sendData(existingData Data, apiConfig ApiConfig, dadosBomba DadosBomba) {
-	dados := map[string]string{
-		"organizationCode": existingData.OrganizationCode,
-		"gasStationCode":   existingData.GasStationCode,
-		"pumpNumber":       strconv.Itoa(dadosBomba.PumpNumber),
-		"quantity":         strconv.FormatFloat(dadosBomba.Quantity, 'f', -1, 64),
-		"unitValue":        strconv.FormatFloat(dadosBomba.UnitValue, 'f', -1, 64),
-		"totalValue":       strconv.FormatFloat(dadosBomba.TotalValue, 'f', -1, 64),
-		"date":             dadosBomba.Date.Format("2006-01-02 15:04:05"),
-	}
-	jsonData, err := json.Marshal(dados)
+func sendData(existingData Data, pumpsData []PumpData, apiConfig ApiConfig) {
+	jsonData, err := json.Marshal(pumpsData)
 	if err != nil {
-		log.Println(err)
+		log.Println("Error marshaling data:", err)
+		return
 	}
+	log.Println("Sending Data")
+	log.Println(apiConfig)
 	req, err := http.NewRequest("POST", apiConfig.Url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Println(err)
+		log.Println("Error creating request:", err)
+		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println(err)
+		log.Println("Error sending request:", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		log.Println("Unexpected status code:", resp.StatusCode)
 	} else {
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated {
-			log.Println(resp.StatusCode)
-		} else {
-			log.Println(dados)
-		}
+		log.Println("Data sent successfully:", pumpsData)
 	}
 }
 
 func readDatabase(existingData Data, apiConfig ApiConfig) {
-	pgCconnStr := fmt.Sprintf("user=%s dbname=desbravador password=%s host=%s port=%s sslmode=disable", existingData.DatabaseUser, existingData.DatabasePassword, existingData.DatabaseIP, existingData.DatabasePort)
-	pgDB, err := sql.Open("postgres", pgCconnStr)
+	log.Println("Getting Data")
+	pgConnStr := fmt.Sprintf("user=%s dbname=%s password=%s host=%s port=%s sslmode=disable", existingData.DBUser, existingData.DBDatabase, existingData.DBPwd, existingData.DBIp, existingData.DBPort)
+	pgDB, err := sql.Open("postgres", pgConnStr)
 	if err != nil {
 		log.Println(err)
+		return
 	}
 	defer pgDB.Close()
-	rows, err := pgDB.Query("SELECT * FROM bombas")
+	_, err = pgDB.Exec(fmt.Sprintf("SET SESSION AUTHORIZATION %s", pq.QuoteIdentifier(existingData.DBRole)))
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	// pgQuery := fmt.Sprintf("SELECT * FROM get_transactions_by_company_id(%s)", existingData.DBCompanyID)
+	pgQuery := fmt.Sprintf(`SELECT
+								a.cdabastecimento,
+								a.dhabastecimento,
+								a.dhprocessamento,
+								a.qtvolume,
+								a.vlunitario,
+								a.vltotal,
+								a.cdbico,
+								a.cdempresa,
+								a.fllancado,
+								a.flcancelado,
+								a.fltipo,
+								b.dsbico,
+								e.dsapelido
+							FROM
+								dah.abastecimento a
+							JOIN
+								dah.bico b ON a.cdbico = b.cdbico
+							JOIN
+								dah.empresa e ON a.cdempresa = e.cdempresa
+							WHERE
+								a.flcancelado = 0 and
+								a.fltipo = 0 and
+								a.dhabastecimento >= (NOW() - INTERVAL '1 hour' ) and
+								a.cdempresa = %s
+							ORDER BY
+								a.cdabastecimento DESC`, existingData.DBCompanyID)
+	rows, err := pgDB.Query(pgQuery)
 	if err != nil {
 		log.Println(err)
+		return
 	}
 	defer rows.Close()
+	pumpsData := []PumpData{}
 	for rows.Next() {
-		dadosBomba := DadosBomba{}
-		err := rows.Scan(&dadosBomba.Id, &dadosBomba.PumpNumber, &dadosBomba.UnitValue, &dadosBomba.Quantity, &dadosBomba.TotalValue, &dadosBomba.Date)
+		pumps := Pumps{}
+		err := rows.Scan(
+			&pumps.CdAbastecimento, &pumps.DhAbastecimento,
+			&pumps.DhProcessamento, &pumps.QtVolume,
+			&pumps.VlUnitario, &pumps.VlTotal,
+			&pumps.CdBico, &pumps.CdEmpresa,
+			&pumps.FlLancado, &pumps.FlCancelado,
+			&pumps.FlTipo, &pumps.DsBico, &pumps.DsApelido,
+		)
 		if err != nil {
 			log.Println(err)
+			continue
 		}
-		sendData(existingData, apiConfig, dadosBomba)
+		pumpsData = append(pumpsData, PumpData{
+			OrganizationCode:        existingData.OrganizationCode,
+			GasStationCode:          existingData.GasStationCode,
+			GasStationTransactionID: pumps.CdAbastecimento,
+			Quantity:                pumps.QtVolume,
+			UnitValue:               pumps.VlUnitario,
+			TotalValue:              pumps.VlTotal,
+			Processed:               pumps.FlLancado,
+			Date:                    pumps.DhAbastecimento.Format("2006-01-02 15:04:05"),
+			PumpNumber:              pumps.CdBico,
+			FuelName:                pumps.DsBico,
+			CompanyName:             pumps.DsApelido,
+		})
 	}
 	err = rows.Err()
 	if err != nil {
 		log.Println(err)
+	}
+	if len(pumpsData) > 0 {
+		sendData(existingData, pumpsData, apiConfig)
 	}
 }
 
