@@ -19,6 +19,7 @@ Name: "StartAfterInstall"; Description: "Run application after install"
 Source: "touchsistemas-desbravador.exe"; DestDir: "{app}"
 Source: "touchsistemas.ico"; DestDir: "{app}";
 Source: ".env"; DestDir: "{app}";
+Source: "touchsistemas.log"; DestDir: "{app}";
 
 [Icons]
 Name: "{group}\Touch Sistemas\Touch Sistemas - Desbravador"; Filename: "{app}\touchsistemas-desbravador.exe"; WorkingDir: "{app}"; IconFilename: "{app}\touchsistemas.ico"
@@ -28,3 +29,38 @@ Name: "{userstartup}\Touch Sistemas - Desbravador"; Filename: "{app}\touchsistem
 
 [Run]
 Filename: "{app}\touchsistemas-desbravador.exe"; Flags: shellexec skipifsilent nowait; Tasks: StartAfterInstall
+
+[Code]
+procedure SetFilePermissions(const FileName: String);
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  if not FileExists(FileName) then
+    Exit;
+
+  Params := Format('"%s" /grant Everyone:(F)', [FileName]);
+  if Exec('icacls', Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode <> 0 then
+      MsgBox('Failed to set permissions for ' + FileName, mbError, MB_OK);
+  end
+  else
+  begin
+    MsgBox('Failed to run icacls utility', mbError, MB_OK);
+  end;
+end;
+
+function ShouldRun: Boolean;
+begin
+  Result := True; // By default, the installer runs
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and ShouldRun then
+  begin
+    // Set permissions after installation is complete
+    SetFilePermissions(ExpandConstant('{app}\touchsistemas.log'));
+  end;
+end;

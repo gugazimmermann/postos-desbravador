@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -78,11 +80,11 @@ func showErrorMessageBox(message string) {
 
 func fatalError(message string, err error) {
 	if err != nil {
-		log.Printf("Fatal Error: %s: %v", message, err)
-		showErrorMessageBox(fmt.Sprintf("Fatal Error: %s: %v", message, err))
+		log.Printf("Erro: %s: %v", message, err)
+		showErrorMessageBox(fmt.Sprintf("Erro: %s: %v", message, err))
 	} else {
-		log.Printf("Fatal Error: %s", message)
-		showErrorMessageBox(fmt.Sprintf("Fatal Error: %s", message))
+		log.Printf("Erro: %s", message)
+		showErrorMessageBox(fmt.Sprintf("Erro: %s", message))
 	}
 	os.Exit(1)
 }
@@ -325,11 +327,11 @@ func readDatabase(existingData Data, apiConfig ApiConfig) {
 func sendDataPeriodically() {
 	existingData, err := readDataFromRegistry()
 	if err != nil {
-		fatalError("Erro ao ler dados do registro:", err)
+		fatalError("Erro ao ler dados do registro", err)
 	}
 	err = godotenv.Load()
 	if err != nil {
-		fatalError("Erro ao carregar o arquivo .env:", err)
+		fatalError("Erro ao carregar o arquivo .env", err)
 	}
 	apiConfig := ApiConfig{
 		Url: os.Getenv("API_URL"),
@@ -342,14 +344,16 @@ func sendDataPeriodically() {
 }
 
 func main() {
+	logPath := "./touchsistemas.log"
+	logName := filepath.Base(logPath)
 	logFile := &lumberjack.Logger{
-		Filename:   "touchsistemas.log",
+		Filename:   logName,
 		MaxSize:    100,
 		MaxBackups: 5,
 		MaxAge:     30,
 		Compress:   true,
 	}
-	log.SetOutput(logFile)
+	log.SetOutput(io.MultiWriter(logFile, os.Stdout))
 
 	var (
 		oCodeTE, gsCodeTE, dbCompanyIDTE, dbIPTE, dbPortTE, dbNameTE, dbUserTE, dbPwdTE, dbRoleTE *walk.TextEdit
@@ -420,7 +424,7 @@ func main() {
 					existingData.GasStationCode = gasStationCode
 					err := saveDataToRegistry(existingData)
 					if err != nil {
-						fatalError("Erro ao salvar dados no registro:", err)
+						fatalError("Erro ao salvar dados no registro", err)
 					}
 					mw.Close()
 				},
@@ -435,5 +439,7 @@ func main() {
 		mw.Hide()
 		go sendDataPeriodically()
 	})
+
+	defer logFile.Close()
 	mw.Run()
 }
