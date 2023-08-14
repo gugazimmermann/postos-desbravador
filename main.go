@@ -18,6 +18,7 @@ import (
 	. "github.com/lxn/walk/declarative"
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows/registry"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type MyWindow struct {
@@ -341,11 +342,13 @@ func sendDataPeriodically() {
 }
 
 func main() {
-	logFile, err := os.OpenFile("touchsistemas.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		fatalError("Erro ao criar arquivo de log:", err)
+	logFile := &lumberjack.Logger{
+		Filename:   "touchsistemas.log",
+		MaxSize:    100,
+		MaxBackups: 5,
+		MaxAge:     30,
+		Compress:   true,
 	}
-	defer logFile.Close()
 	log.SetOutput(logFile)
 
 	var (
