@@ -236,7 +236,7 @@ func sendData(existingData Data, pumpsData PumpsData, apiConfig ApiConfig) {
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		log.Println("Status Code:", resp.StatusCode)
 	}
 }
