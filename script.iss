@@ -1,6 +1,6 @@
 [Setup]
 AppName=Touch Sistemas - Desbravador
-AppVersion=0.1.0
+AppVersion=1.0.0
 WizardStyle=modern
 DefaultDirName={pf}\Touch Sistemas
 DefaultGroupName=Touch Sistemas
@@ -18,6 +18,7 @@ Name: "StartAfterInstall"; Description: "Run application after install"
 [Files]
 Source: "touchsistemas-desbravador.exe"; DestDir: "{app}"
 Source: "touchsistemas.ico"; DestDir: "{app}";
+Source: ".env"; DestDir: "{app}";
 
 [Icons]
 Name: "{group}\Touch Sistemas\Touch Sistemas - Desbravador"; Filename: "{app}\touchsistemas-desbravador.exe"; WorkingDir: "{app}"; IconFilename: "{app}\touchsistemas.ico"

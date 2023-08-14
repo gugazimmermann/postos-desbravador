@@ -8,14 +8,22 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
+	"github.com/lxn/walk"
+	. "github.com/lxn/walk/declarative"
+	"github.com/lxn/win"
 	"golang.org/x/sys/windows/registry"
 )
+
+type MyWindow struct {
+	*walk.MainWindow
+	ni *walk.NotifyIcon
+}
 
 type Data struct {
 	OrganizationCode string `json:"organizationCode"`
@@ -29,25 +37,19 @@ type Data struct {
 	DBCompanyID      string `json:"dbCompanyID"`
 }
 
-type Pumps struct {
+type PumpRows struct {
 	CdAbastecimento int
 	DhAbastecimento time.Time
-	DhProcessamento time.Time
 	QtVolume        float64
 	VlUnitario      float64
 	VlTotal         float64
-	CdBico          int
-	CdEmpresa       int
 	FlLancado       int
-	FlCancelado     int
-	FlTipo          int
 	DsBico          string
+	NrBico          int
 	DsApelido       string
 }
 
-type PumpData struct {
-	OrganizationCode        string
-	GasStationCode          string
+type PumpRowsData struct {
 	GasStationTransactionID int
 	Quantity                float64
 	UnitValue               float64
@@ -59,12 +61,29 @@ type PumpData struct {
 	CompanyName             string
 }
 
+type PumpsData struct {
+	OrganizationCode string
+	GasStationCode   string
+	PumpRowsData     []PumpRowsData
+}
+
 type ApiConfig struct {
 	Url string
 }
 
-func main() {
-	sendDataPeriodically()
+func showErrorMessageBox(message string) {
+	walk.MsgBox(nil, "Error", message, walk.MsgBoxIconError|walk.MsgBoxOK)
+}
+
+func fatalError(message string, err error) {
+	if err != nil {
+		log.Printf("Fatal Error: %s: %v", message, err)
+		showErrorMessageBox(fmt.Sprintf("Fatal Error: %s: %v", message, err))
+	} else {
+		log.Printf("Fatal Error: %s", message)
+		showErrorMessageBox(fmt.Sprintf("Fatal Error: %s", message))
+	}
+	os.Exit(1)
 }
 
 func readDataFromRegistry() (Data, error) {
@@ -170,14 +189,40 @@ func saveDataToRegistry(data Data) error {
 	return nil
 }
 
-func sendData(existingData Data, pumpsData []PumpData, apiConfig ApiConfig) {
+func (mw *MyWindow) AddNotifyIcon() {
+	var err error
+	mw.ni, err = walk.NewNotifyIcon(mw)
+	if err != nil {
+		log.Println(err)
+	}
+	icon, err := walk.Resources.Image("touchsistemas.ico")
+	if err != nil {
+		log.Println(err)
+	}
+	mw.ni.SetIcon(icon)
+	if err := mw.ni.SetToolTip("Touch Sistemas Postos - Integração com Desbravador"); err != nil {
+		log.Println(err)
+	}
+	exitAction := walk.NewAction()
+	if err := exitAction.SetText("Fechar"); err != nil {
+		log.Println(err)
+	}
+	exitAction.Triggered().Attach(func() { walk.App().Exit(0) })
+	if err := mw.ni.ContextMenu().Actions().Add(exitAction); err != nil {
+		log.Println(err)
+	}
+	mw.ni.SetVisible(true)
+	if err := mw.ni.ShowMessage("Touch Sistemas Postos", "Integração com Desbravador."); err != nil {
+		log.Println(err)
+	}
+}
+
+func sendData(existingData Data, pumpsData PumpsData, apiConfig ApiConfig) {
 	jsonData, err := json.Marshal(pumpsData)
 	if err != nil {
 		log.Println("Error marshaling data:", err)
 		return
 	}
-	log.Println("Sending Data")
-	log.Println(apiConfig)
 	req, err := http.NewRequest("POST", apiConfig.Url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Println("Error creating request:", err)
@@ -191,41 +236,32 @@ func sendData(existingData Data, pumpsData []PumpData, apiConfig ApiConfig) {
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		log.Println("Unexpected status code:", resp.StatusCode)
-	} else {
-		log.Println("Data sent successfully:", pumpsData)
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Println("Status Code:", resp.StatusCode)
 	}
 }
 
 func readDatabase(existingData Data, apiConfig ApiConfig) {
-	log.Println("Getting Data")
 	pgConnStr := fmt.Sprintf("user=%s dbname=%s password=%s host=%s port=%s sslmode=disable", existingData.DBUser, existingData.DBDatabase, existingData.DBPwd, existingData.DBIp, existingData.DBPort)
 	pgDB, err := sql.Open("postgres", pgConnStr)
 	if err != nil {
-		log.Println(err)
-		return
+		fatalError("Erro ao abrir o banco de dados:", err)
 	}
 	defer pgDB.Close()
 	_, err = pgDB.Exec(fmt.Sprintf("SET SESSION AUTHORIZATION %s", pq.QuoteIdentifier(existingData.DBRole)))
 	if err != nil {
-		log.Fatal(err)
-		return
+		fatalError("Erro ao definir ROLE no banco de dados:", err)
 	}
 	// pgQuery := fmt.Sprintf("SELECT * FROM get_transactions_by_company_id(%s)", existingData.DBCompanyID)
 	pgQuery := fmt.Sprintf(`SELECT
 								a.cdabastecimento,
 								a.dhabastecimento,
-								a.dhprocessamento,
 								a.qtvolume,
 								a.vlunitario,
 								a.vltotal,
-								a.cdbico,
-								a.cdempresa,
 								a.fllancado,
-								a.flcancelado,
-								a.fltipo,
 								b.dsbico,
+								b.nrbico,
 								e.dsapelido
 							FROM
 								dah.abastecimento a
@@ -234,64 +270,65 @@ func readDatabase(existingData Data, apiConfig ApiConfig) {
 							JOIN
 								dah.empresa e ON a.cdempresa = e.cdempresa
 							WHERE
+								a.fllancado = 0 and
 								a.flcancelado = 0 and
 								a.fltipo = 0 and
-								a.dhabastecimento >= (NOW() - INTERVAL '1 hour' ) and
+								a.dhabastecimento >= (NOW() - INTERVAL '12 hours' ) and
 								a.cdempresa = %s
 							ORDER BY
-								a.cdabastecimento DESC`, existingData.DBCompanyID)
+								a.dhprocessamento DESC`, existingData.DBCompanyID)
 	rows, err := pgDB.Query(pgQuery)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	defer rows.Close()
-	pumpsData := []PumpData{}
+
+	pumpRowData := []PumpRowsData{}
 	for rows.Next() {
-		pumps := Pumps{}
+		pumpRow := PumpRows{}
 		err := rows.Scan(
-			&pumps.CdAbastecimento, &pumps.DhAbastecimento,
-			&pumps.DhProcessamento, &pumps.QtVolume,
-			&pumps.VlUnitario, &pumps.VlTotal,
-			&pumps.CdBico, &pumps.CdEmpresa,
-			&pumps.FlLancado, &pumps.FlCancelado,
-			&pumps.FlTipo, &pumps.DsBico, &pumps.DsApelido,
+			&pumpRow.CdAbastecimento, &pumpRow.DhAbastecimento,
+			&pumpRow.QtVolume, &pumpRow.VlUnitario, &pumpRow.VlTotal,
+			&pumpRow.FlLancado, &pumpRow.DsBico, &pumpRow.NrBico,
+			&pumpRow.DsApelido,
 		)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
-		pumpsData = append(pumpsData, PumpData{
-			OrganizationCode:        existingData.OrganizationCode,
-			GasStationCode:          existingData.GasStationCode,
-			GasStationTransactionID: pumps.CdAbastecimento,
-			Quantity:                pumps.QtVolume,
-			UnitValue:               pumps.VlUnitario,
-			TotalValue:              pumps.VlTotal,
-			Processed:               pumps.FlLancado,
-			Date:                    pumps.DhAbastecimento.Format("2006-01-02 15:04:05"),
-			PumpNumber:              pumps.CdBico,
-			FuelName:                pumps.DsBico,
-			CompanyName:             pumps.DsApelido,
+		pumpRowData = append(pumpRowData, PumpRowsData{
+			GasStationTransactionID: pumpRow.CdAbastecimento,
+			Quantity:                pumpRow.QtVolume,
+			UnitValue:               pumpRow.VlUnitario,
+			TotalValue:              pumpRow.VlTotal,
+			Processed:               pumpRow.FlLancado,
+			Date:                    pumpRow.DhAbastecimento.Format("2006-01-02 15:04:05"),
+			PumpNumber:              pumpRow.NrBico,
+			FuelName:                pumpRow.DsBico,
+			CompanyName:             pumpRow.DsApelido,
 		})
 	}
 	err = rows.Err()
 	if err != nil {
 		log.Println(err)
 	}
-	if len(pumpsData) > 0 {
-		sendData(existingData, pumpsData, apiConfig)
+	pumpsData := PumpsData{
+		OrganizationCode: existingData.OrganizationCode,
+		GasStationCode:   existingData.GasStationCode,
+		PumpRowsData:     pumpRowData,
 	}
+	sendData(existingData, pumpsData, apiConfig)
 }
 
 func sendDataPeriodically() {
 	existingData, err := readDataFromRegistry()
 	if err != nil {
-		log.Println(err)
+		fatalError("Erro ao ler dados do registro:", err)
 	}
 	err = godotenv.Load()
 	if err != nil {
-		log.Println("Erro ao carregar o arquivo .env:", err)
+		fatalError("Erro ao carregar o arquivo .env:", err)
 	}
 	apiConfig := ApiConfig{
 		Url: os.Getenv("API_URL"),
@@ -301,4 +338,99 @@ func sendDataPeriodically() {
 	for range ticker.C {
 		readDatabase(existingData, apiConfig)
 	}
+}
+
+func main() {
+	logFile, err := os.OpenFile("touchsistemas.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		fatalError("Erro ao criar arquivo de log:", err)
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
+
+	var (
+		oCodeTE, gsCodeTE, dbCompanyIDTE, dbIPTE, dbPortTE, dbNameTE, dbUserTE, dbPwdTE, dbRoleTE *walk.TextEdit
+	)
+
+	existingData, err := readDataFromRegistry()
+	if err != nil {
+		log.Println(err)
+	}
+
+	mw := new(MyWindow)
+	if err := (MainWindow{
+		AssignTo: &mw.MainWindow,
+		Title:    "Touch Sistemas - Postos",
+		Size:     Size{Width: 400, Height: 200},
+		Layout:   VBox{},
+		Icon:     "touchsistemas.ico",
+		OnSizeChanged: func() {
+			if win.IsIconic(mw.Handle()) {
+				mw.Hide()
+			}
+		},
+		Children: []Widget{
+			GroupBox{
+				Title:  "Preencha os dados abaixo:",
+				Layout: Grid{Columns: 2},
+				Children: []Widget{
+					Label{Text: "IP do Banco de Dados:"},
+					TextEdit{AssignTo: &dbIPTE, Text: existingData.DBIp},
+					Label{Text: "Porta do Banco de Dados:"},
+					TextEdit{AssignTo: &dbPortTE, Text: existingData.DBPort},
+					Label{Text: "Nome do Banco de Dados:"},
+					TextEdit{AssignTo: &dbNameTE, Text: existingData.DBDatabase},
+					Label{Text: "Usuário do Banco de Dados:"},
+					TextEdit{AssignTo: &dbUserTE, Text: existingData.DBUser},
+					Label{Text: "Senha do Banco de Dados:"},
+					TextEdit{AssignTo: &dbPwdTE, Text: existingData.DBPwd},
+					Label{Text: "Grupo (Role) do Banco de Dados:"},
+					TextEdit{AssignTo: &dbRoleTE, Text: existingData.DBRole},
+					Label{Text: "ID do Posto no Banco de Dados:"},
+					TextEdit{AssignTo: &dbCompanyIDTE, Text: existingData.DBCompanyID},
+					Label{Text: "Código da Organização:"},
+					TextEdit{AssignTo: &oCodeTE, Text: existingData.OrganizationCode},
+					Label{Text: "Código do Posto:"},
+					TextEdit{AssignTo: &gsCodeTE, Text: existingData.GasStationCode},
+				},
+			},
+			PushButton{
+				Text: "Continuar",
+				OnClicked: func() {
+					dbIP := strings.TrimSpace(dbIPTE.Text())
+					dbPort := strings.TrimSpace(dbPortTE.Text())
+					dbDatabase := strings.TrimSpace(dbNameTE.Text())
+					dbUser := strings.TrimSpace(dbUserTE.Text())
+					dbPassword := strings.TrimSpace(dbPwdTE.Text())
+					dbRole := strings.TrimSpace(dbRoleTE.Text())
+					dbCompanyID := strings.TrimSpace(dbCompanyIDTE.Text())
+					organizationCode := strings.TrimSpace(oCodeTE.Text())
+					gasStationCode := strings.TrimSpace(gsCodeTE.Text())
+					existingData.DBIp = dbIP
+					existingData.DBPort = dbPort
+					existingData.DBDatabase = dbDatabase
+					existingData.DBUser = dbUser
+					existingData.DBPwd = dbPassword
+					existingData.DBRole = dbRole
+					existingData.DBCompanyID = dbCompanyID
+					existingData.OrganizationCode = organizationCode
+					existingData.GasStationCode = gasStationCode
+					err := saveDataToRegistry(existingData)
+					if err != nil {
+						fatalError("Erro ao salvar dados no registro:", err)
+					}
+					mw.Close()
+				},
+			},
+		},
+	}.Create()); err != nil {
+		log.Println(err)
+	}
+	mw.AddNotifyIcon()
+	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
+		*canceled = true
+		mw.Hide()
+		go sendDataPeriodically()
+	})
+	mw.Run()
 }
